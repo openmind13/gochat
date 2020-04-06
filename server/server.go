@@ -28,7 +28,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer server.Close()
-	fmt.Println("Server started!")
+	fmt.Printf("Server started at port: %s", port)
 
 	for {
 		conn, err := server.Accept()
