@@ -4,104 +4,113 @@ import (
 	"fmt"
 	"log"
 	"net"
+
+	"github.com/openmind13/gochat/conn"
+	"github.com/openmind13/gochat/message"
 )
 
 const (
 	port = ":5050"
+
+	buffSize = 512
 )
 
-// terminal colors
-const (
-	reset  = "\033[0m"
-	red    = "\033[1;31m"
-	yellow = "\033[1;33m"
-	blue   = "\033[0;34m"
-)
+// Server ...
+type Server struct {
+	users         map[User]bool
+	listener      net.Listener
+	messageBuffer chan message.Message
+}
 
-var (
-	connections = make(map[net.Conn]string)
-)
-
-func main() {
-	server, err := net.Listen("tcp", port)
+// NewServer create new server
+func NewServer(addr string) *Server {
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
-		log.Fatal(err)
+		return nil
 	}
-	defer server.Close()
-	fmt.Printf("Server started at port: %s", port)
+	return &Server{
+		users:         nil,
+		listener:      l,
+		messageBuffer: make(chan message.Message),
+	}
+}
 
+// Start ...
+func (s *Server) Start() error {
+	go s.sender()
+	s.listenSocket()
+	return nil
+}
+
+// Stop ...
+func (s *Server) Stop() {
+	s.listener.Close()
+}
+
+func (s *Server) listenSocket() {
 	for {
-		conn, err := server.Accept()
+		conn, err := s.listener.Accept()
 		if err != nil {
+			continue
+		}
+		if !s.registerUser(conn) {
+			continue
+		}
+		go s.listenConnection(conn)
+	}
+}
+
+func (s *Server) listenConnection(connection net.Conn) {
+	co := conn.Conn{connection}
+	for {
+		msg, err := co.ReadMessage()
+		if err != nil {
+			fmt.Println(err)
+			break
+		}
+		switch msg.ControlSequence {
+		case message.ControlAccept:
+		case message.ControlRegistration:
+			fmt.Println("have registration message")
+		case message.ControlMessage:
+			s.messageBuffer <- msg
+		}
+	}
+	co.Close()
+}
+
+// sender sends messages from
+func (s *Server) sender() {
+	for {
+		msg, ok := <-s.messageBuffer
+		if !ok {
+			continue
+		}
+		s.sendBroadcast(msg)
+	}
+}
+
+// sendBroadcast sends message to all connected users
+func (s *Server) sendBroadcast(msg message.Message) {
+	for key := range s.users {
+		if err := key.conn.WriteMessage(msg); err != nil {
+			s.Stop()
 			log.Fatal(err)
 		}
-		go handleConnection(conn)
 	}
-	// for {
-	// 	length, err := conn.Read(buffer)
-	// 	if err != nil {
-	// 		log.Fatal(err)
-	// 		break
-	// 	}
-	// 	message += string(buffer[:length])
-	// }
 }
 
-func handleConnection(conn net.Conn) {
-	var (
-		buffer   = make([]byte, 512)
-		nickname string
-		message  string
-	)
-
+// registerUser ...
+func (s *Server) registerUser(conn net.Conn) bool {
 	for {
-		length, err := conn.Read(buffer)
-		if err != nil {
-			fmt.Println("error in setting nickname")
-		}
-		nickname = string(buffer[:length])
-		if nicknameIsCorrect(nickname) {
-			conn.Write([]byte("ok"))
-			connections[conn] = nickname
 
-			log.Printf("| %s%s%s %s%s%s", yellow, nickname, reset, red, "joined the chat", reset)
-			//log.Println(nickname + " joined the chat")
-			sendToAll(conn, nickname+" joined the chat")
-
-			break
-		}
 	}
-
-	for {
-		length, err := conn.Read(buffer)
-		if err != nil {
-			log.Printf("| %s%s%s %s%s%s", yellow, nickname, reset, red, "left chat", reset)
-			break
-		}
-		message = string(buffer[:length])
-
-		log.Printf("| %s%s%s > %s", yellow, nickname, reset, message)
-		// log.Println(nickname + " > " + message)
-		sendToAll(conn, nickname+" > "+message)
-	}
-
-	sendToAll(conn, nickname+" left the chat")
-	delete(connections, conn)
 }
 
-func nicknameIsCorrect(nick string) bool {
-	for _, value := range connections {
-		if value == nick {
-			return false
-		}
+func (s *Server) inChat(user User) bool {
+	flag, ok := s.users[user]
+	if !ok {
+		return false
 	}
-	return true
-}
-
-func sendToAll(sender net.Conn, message string) {
-	for conn := range connections {
-		if sender != conn {
-			conn.Write([]byte(message))
-		}
-	}
+	return flag
 }

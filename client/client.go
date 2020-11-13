@@ -7,66 +7,71 @@ import (
 	"net"
 	"os"
 	"strings"
+
+	"github.com/openmind13/gochat/conn"
+	"github.com/openmind13/gochat/message"
+	"github.com/openmind13/gochat/view"
 )
 
 const (
 	serverAddr = ":5050"
 )
 
-// terminal colors
-const (
-	reset  = "\033[0m"
-	red    = "\033[1;31m"
-	yellow = "\033[1;33m"
-	blue   = "\033[0;34m"
-)
+// Client ...
+type Client struct {
+	conn     conn.Conn
+	username string
+}
 
-var (
-	buffer   = make([]byte, 512)
-	message  string
-	nickname string
-)
-
-func main() {
-	conn, err := net.Dial("tcp", serverAddr)
+// NewClient ...
+func NewClient(serverAddr string) *Client {
+	connection, err := net.Dial("tcp", serverAddr)
 	if err != nil {
-		fmt.Println("Failed to connect to the server\nExit program")
-		os.Exit(0)
+		return nil
 	}
+	c := conn.Conn{connection}
+	client := &Client{
+		conn: c,
+	}
+	return client
+}
 
-	setNickname(conn)
+// Start starts client
+func (client *Client) Start() error {
+	return nil
+}
 
-	go recieve(conn)
-
+func (client *Client) listenServer() {
 	for {
-		message = inputString()
-		conn.Write([]byte(message))
+		msg, err := client.conn.ReadMessage()
+		if err != nil {
+			log.Printf("Error in reading from message\n")
+			os.Exit(0)
+		}
+		switch msg.ControlSequence {
+		case message.ControlMessage:
+			fmt.Println("have text message")
+			view.PrintMessage(msg)
+		case message.ControlAccept:
+			fmt.Println("have access message")
+		case message.ControlRegistration:
+			fmt.Println("have registration message")
+		}
 	}
 }
 
-func setNickname(conn net.Conn) {
-	var (
-		requestNick string
-		answer      string
-	)
+func (client *Client) sender(conn net.Conn) {
 	for {
-		fmt.Printf("%sEnter your nickname > %s", red, reset)
-		requestNick = inputString()
-		conn.Write([]byte(requestNick))
-
-		length, err := conn.Read(buffer)
-		if err != nil {
-			fmt.Println("error in setNickname")
-			log.Fatal(err)
+		text := inputString()
+		msg := message.Message{
+			ControlSequence: message.ControlMessage,
+			Author:          client.username,
+			Text:            text,
 		}
-
-		answer = string(buffer[:length])
-		if answer == "ok" {
-			nickname = requestNick
-			return
+		if err := client.conn.WriteMessage(msg); err != nil {
+			fmt.Println("Error in writing message")
+			os.Exit(0)
 		}
-
-		fmt.Println("Nickname is used or invalid. Try again")
 	}
 }
 
@@ -77,22 +82,3 @@ func inputString() string {
 	}
 	return strings.Replace(msg, "\n", "", -1)
 }
-
-func recieve(conn net.Conn) {
-	for {
-		length, err := conn.Read(buffer)
-		if err != nil {
-			fmt.Printf("%sServer stopped!%s", red, reset)
-			os.Exit(0)
-		}
-		message = string(buffer[:length])
-		log.Printf("| %s%s%s", blue, message, reset)
-	}
-}
-
-// func send(conn net.Conn) {
-// 	for {
-// 		message = inputString()
-// 		conn.Write([]byte(message))
-// 	}
-// }
